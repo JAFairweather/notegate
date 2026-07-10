@@ -7,6 +7,8 @@
     "smoke": "node test/smoke.mjs",
     "smoke:local": "node test/smoke.mjs --local",
     "e2e": "node test/e2e.mjs",
+    "dialogue": "node test/dialogue.mjs",
+    "dialogue:local": "node test/dialogue.mjs --local",
     "web": "node inbox/serve.mjs",
     "sync-lib": "cp ../nip-demo/nipxx.mjs ../nip-demo/liverelay.mjs ../nip-demo/relay.mjs lib/"
   },
