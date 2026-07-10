@@ -2,7 +2,9 @@
 // ARE the reply channel), PoW-mined gift wrap, per-relay jittered publish.
 // This page must make zero network requests except to relays.
 
-import { nip06, nip19 } from 'nostr-tools'
+import { nip19 } from 'nostr-tools'
+// nip06 is not re-exported by the esm.sh root bundle — import the subpath
+import * as nip06 from 'nostr-tools/nip06'
 import { LiveRelay } from '../lib/liverelay.mjs'
 import { wrapWithPow } from '../shared/wrap.mjs'
 
@@ -37,8 +39,7 @@ $('f').onsubmit = async (e) => {
   try {
     // BIP-39 words are the source's whole identity and reply channel
     const words = nip06.generateSeedWords()
-    const skHex = nip06.privateKeyFromSeedWords(words)
-    const sk = Uint8Array.from(skHex.match(/../g), h => parseInt(h, 16))
+    const sk = nip06.privateKeyFromSeedWords(words)   // Uint8Array in nostr-tools 2.x
     const rumor = {
       kind: 14, created_at: Math.floor(Date.now() / 1000), tags: [],
       content: JSON.stringify({ notegate: 1, text, thread: null }),
