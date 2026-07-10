@@ -42,6 +42,25 @@
   .after { display:none; }
   .after p { font-size:14px; color:var(--dim); }
   .err { color:var(--warn); }
+  .ret-link { margin-top:28px; font-size:14px; }
+  .ret-link a { color:var(--dim); cursor:pointer; text-decoration:underline; }
+  #retsec { display:none; }
+  #retsec p { font-size:14px; color:var(--dim); }
+  #retsec .row { display:flex; gap:10px; }
+  #retsec input { flex:1; background:var(--panel); border:1px solid var(--line);
+    border-radius:10px; color:var(--text); padding:12px 14px; font:inherit;
+    font-size:14px; font-family:var(--mono); }
+  #retsec input:focus { outline:none; border-color:var(--accent); }
+  #retsec .row button { margin-top:0; }
+  #dlg { display:none; margin-top:20px; }
+  #dlg .msg { background:var(--panel); border:1px solid var(--line);
+    border-radius:10px; padding:12px 14px; margin-bottom:10px; }
+  #dlg .msg.me { border-left:2px solid var(--accent); }
+  #dlg .who { color:var(--dim); font-size:12px; margin-bottom:4px; }
+  #dlg .body { white-space:pre-wrap; overflow-wrap:break-word; font-size:15px; }
+  #dlg textarea { min-height:90px; margin-top:8px; }
+  #dlg .refresh { color:var(--dim); font-size:13px; cursor:pointer;
+    text-decoration:underline; }
 </style>
 </head>
 <body>
@@ -68,6 +87,25 @@
     <div class="phrase" id="phrase"></div>
     <p>To return: open this page again and choose "returning source".</p>
   </div>
+  <div class="ret-link" id="ret-link"><a id="ret">Returning source? Enter your recovery phrase</a></div>
+  <section id="retsec">
+    <h1>Reopen your conversation</h1>
+    <p>The phrase never leaves this page — it derives the key that unlocks the
+       reply channel. The same caution applies: relays see your IP, so use Tor
+       Browser if your situation is serious.</p>
+    <div class="row">
+      <input id="words" placeholder="your recovery phrase (twelve words)" autocomplete="off" spellcheck="false">
+      <button id="ret-open">Open</button>
+    </div>
+    <div class="status" id="ret-status"></div>
+    <div id="dlg">
+      <div id="dlg-msgs"></div>
+      <a class="refresh" id="dlg-refresh">check again for replies</a>
+      <textarea id="reply" placeholder="Reply to the recipient…"></textarea>
+      <button id="reply-send">Encrypt &amp; send reply</button>
+      <div class="status" id="reply-status"></div>
+    </div>
+  </section>
 </main>
 <script type="module" src="submit.mjs"></script>
 </body>
