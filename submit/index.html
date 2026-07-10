@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#111214">
+<title>Secure tip line</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23191b1e'/%3E%3Cpath d='M20 44V20h14l10 10v14z' fill='none' stroke='%23c8cdd4' stroke-width='5' stroke-linejoin='round'/%3E%3C/svg%3E">
+<script type="importmap">
+{ "imports": { "nostr-tools": "https://esm.sh/nostr-tools@2.23.9?bundle",
+               "nostr-tools/pool": "https://esm.sh/nostr-tools@2.23.9/pool?bundle" } }
+</script>
+<style>
+  /* Notegate: neutral, high-contrast, serious. No warmth, no whimsy. */
+  :root { --bg:#111214; --panel:#191b1e; --line:#33373d; --text:#e8eaed;
+    --dim:#9aa0a8; --accent:#c8cdd4; --warn:#d9a648; --ok:#7cbf8e;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  main { max-width:640px; margin:0 auto; padding:36px 24px 80px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .to { color:var(--dim); margin-bottom:24px; }
+  .to b { color:var(--text); }
+  .warn { background:rgba(217,166,72,.08); border:1px solid rgba(217,166,72,.35);
+    border-radius:10px; padding:14px 16px; font-size:14px; color:var(--warn);
+    margin-bottom:22px; }
+  .warn b { display:block; margin-bottom:6px; }
+  textarea { width:100%; min-height:180px; background:var(--panel);
+    border:1px solid var(--line); border-radius:10px; color:var(--text);
+    padding:14px; font:inherit; resize:vertical; }
+  textarea:focus { outline:none; border-color:var(--accent); }
+  button { background:var(--accent); color:#16181b; border:none; border-radius:10px;
+    padding:12px 22px; font:inherit; font-weight:650; cursor:pointer; margin-top:14px; }
+  button:disabled { opacity:.5; cursor:default; }
+  .status { color:var(--dim); font-size:14px; margin-top:12px; min-height:1.4em; }
+  .phrase { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:16px; font-family:var(--mono); font-size:15px; line-height:1.8;
+    margin:14px 0; user-select:all; }
+  .after { display:none; }
+  .after p { font-size:14px; color:var(--dim); }
+  .err { color:var(--warn); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Send a secure tip</h1>
+  <div class="to" id="to">loading recipient…</div>
+  <div class="warn"><b>Before you type anything, understand what this does and does not hide.</b>
+    Your message and any follow-up dialogue are end-to-end encrypted; no server
+    holds them, and the message you send carries no signature that identifies
+    you. But the relays that carry it can see your <b>IP address</b> and when
+    you sent it. If your situation is serious, open this page in
+    <b>Tor Browser</b> and do not use a work or home network. Losing the
+    recovery phrase shown after sending permanently closes the reply channel —
+    that is by design.</div>
+  <form id="f">
+    <textarea id="tip" placeholder="Your tip. Say as much or as little as you want — you can be reached for follow-up only if you keep the recovery phrase." required></textarea>
+    <button id="send" type="submit">Encrypt &amp; send</button>
+    <div class="status" id="status"></div>
+  </form>
+  <div class="after" id="after">
+    <h1>Sent.</h1>
+    <p>If you want to hear back, write these words down — they are the only
+       way to reopen this conversation. Close this tab and they never existed.</p>
+    <div class="phrase" id="phrase"></div>
+    <p>To return: open this page again and choose "returning source".</p>
+  </div>
+</main>
+<script type="module" src="submit.mjs"></script>
+</body>
+</html>
