@@ -200,9 +200,18 @@ $('go').onclick = () => {
 }
 $('nsec').onkeydown = (e) => { if (e.key === 'Enter') $('go').onclick() }
 $('gen').onclick = () => {
+  // The key is shown in-page (selectable, with a Copy button) — an alert()
+  // can't be copied, and this key is the whole tip line.
   const k = generateSecretKey()
-  alert('Your new intake key (store it offline — it IS the tip line):\n\n' + nip19.nsecEncode(k))
-  login(k)
+  $('err').textContent = ''
+  $('newkey').style.display = ''
+  $('newkey-nsec').textContent = nip19.nsecEncode(k)
+  $('newkey-copy').onclick = async () => {
+    await navigator.clipboard.writeText(nip19.nsecEncode(k))
+    $('newkey-copy').textContent = 'Copied \u2713'
+    setTimeout(() => { $('newkey-copy').textContent = 'Copy' }, 2000)
+  }
+  $('newkey-continue').onclick = () => login(k)
 }
 $('refresh').onclick = () => loadTips()
 $('show-arch').onclick = () => { state.showArchived = !state.showArchived; render() }

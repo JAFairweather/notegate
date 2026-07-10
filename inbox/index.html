@@ -50,6 +50,10 @@
   #login .alt { color:var(--dim); font-size:13px; }
   #login .alt a { color:var(--accent); cursor:pointer; text-decoration:underline; }
   #login .err { color:var(--warn); margin-top:12px; font-size:13px; min-height:1em; }
+  .phrase { background:var(--bg); border:1px solid var(--line); border-radius:10px;
+    padding:14px 16px; font-family:var(--mono); font-size:14px; word-break:break-all;
+    margin:16px 0 10px; user-select:all; }
+  #newkey .warn { color:var(--warn); font-size:13px; margin:0 0 12px; }
   #me { display:none; align-items:center; gap:10px; color:var(--dim); font-size:13px; }
   #me code { font-family:var(--mono); color:var(--text); cursor:pointer; }
 
@@ -111,6 +115,15 @@
     </div>
     <div class="alt">Setting up a tip line? <a id="gen">Generate a new intake key</a>
       — store it offline; it is the tip line.</div>
+    <div id="newkey" style="display:none">
+      <div class="phrase" id="newkey-nsec"></div>
+      <p class="warn">Store it offline — it IS the tip line, and anyone holding it
+        can read your sources' messages. No reset, no server copy.</p>
+      <div class="row">
+        <button id="newkey-copy">Copy</button>
+        <button class="primary" id="newkey-continue" style="flex:1">Continue</button>
+      </div>
+    </div>
     <div class="err" id="err"></div>
   </section>
 
