@@ -17,7 +17,7 @@ const types = {
 createServer(async (req, res) => {
   let path = decodeURIComponent(new URL(req.url, 'http://x').pathname)
   if (path === '/') { res.writeHead(302, { location: '/inbox/' }); return res.end() }
-  if (path === '/inbox/') path = '/inbox/index.html'
+  if (path.endsWith('/')) path += 'index.html'
   const file = normalize(join(root, path))
   try {
     if (!file.startsWith(root)) throw new Error('outside root')
