@@ -2,12 +2,18 @@
 // login pattern), kind-0 identity publish, share-URL builder, and the tip
 // list: poll kind-1059 wraps addressed to the intake key, apply the NIP-13
 // PoW gate BEFORE any decryption, unwrap survivors, thread by the rumor's
-// ephemeral pubkey. Archive is local triage state — nothing about triage
-// ever touches a relay.
+// ephemeral pubkey.
+//
+// M2 dialogue: replying opens a per-source case (case.mjs) — a 30440 scope
+// granted to the source's ephemeral key, recorded in the Grant Index, which
+// IS the case docket. Once a case exists its open/archived status lives in
+// the payload and docket (shared with the source); caseless threads keep the
+// local-only archive triage from M1.
 
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
 import { LiveRelay } from '../lib/liverelay.mjs'
 import { unwrap, powBits } from '../shared/wrap.mjs'
+import { loadDocket, upsertCase, fetchCase, caseOutOfSync } from './case.mjs'
 
 const RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net']
 const POW_BITS = 20               // gate: wraps below this are never decrypted
@@ -21,12 +27,18 @@ const hexOf = (b) => Array.from(b, x => x.toString(16).padStart(2, '0')).join(''
 const state = {
   relay: null, sk: null, me: null,
   threads: new Map(),             // source pubkey → [{ at, text }] (newest thread first at render)
-  archived: new Set(),            // source pubkeys, persisted in localStorage
+  archived: new Set(),            // caseless threads only, persisted in localStorage
+  docket: { index: { issued: [], received: [] }, cases: new Map() },  // Grant Index = case docket
+  caseData: new Map(),            // source pubkey → decrypted case payload
   gated: 0,                       // wraps rejected by the PoW gate (never decrypted)
   showArchived: false,
   seen: new Set(),                // wrap ids already processed
   timer: null,
 }
+
+const caseOf = (src) => state.docket.cases.get(src)
+const isArchived = (src) =>
+  caseOf(src) ? caseOf(src).status === 'archived' : state.archived.has(src)
 
 function parseKey(input) {
   const s = input.trim()
@@ -52,6 +64,7 @@ async function login(sk) {
   sessionStorage.setItem('notegate-login', hexOf(sk))
   state.relay ??= new LiveRelay(RELAYS)
   loadArchived()
+  try { await refreshDocket() } catch { /* no index yet — first run */ }
   $('login').style.display = 'none'
   $('setup').style.display = 'block'
   $('me').style.display = 'flex'
@@ -91,6 +104,15 @@ $('copy-url').onclick = () => {
   $('setup-msg').textContent = 'share URL copied.'
 }
 
+// --- the case docket (kind 10440 — the ONLY case store) ----------------------
+async function refreshDocket() {
+  state.docket = await loadDocket(state.relay, state.sk)
+  await Promise.all([...state.docket.cases.entries()].map(async ([src, c]) => {
+    const res = await fetchCase(state.relay, state.me, c)
+    if (res.status === 'ok') state.caseData.set(src, res.data)
+  }))
+}
+
 // --- the inbox pipeline: poll → PoW gate → unwrap → thread -------------------
 async function loadTips() {
   $('status').textContent = 'polling relays for tips…'
@@ -104,6 +126,7 @@ async function loadTips() {
     if (powBits(wrap) < POW_BITS) { state.gated++; continue }
     let rumor
     try { rumor = unwrap(state.sk, wrap) } catch { continue }   // not for us / malformed
+    if (rumor.kind !== 14) continue                             // tips and replies only
     let text
     try {
       const c = JSON.parse(rumor.content)
@@ -114,6 +137,16 @@ async function loadTips() {
     msgs.sort((a, b) => a.at - b.at)
     state.threads.set(rumor.pubkey, msgs)
   }
+  // keep open cases in sync: new source messages get merged into the case
+  // payload (free republish, same key) so the source's own view is complete
+  for (const [src, msgs] of state.threads) {
+    if (!caseOf(src) || !caseOutOfSync(state.caseData.get(src), msgs)) continue
+    try {
+      const { payload } = await upsertCase(state.relay, state.sk, state.docket, src,
+        { sourceMsgs: msgs, powPolicy: POW_BITS })
+      state.caseData.set(src, payload)
+    } catch { /* transient relay failure — retried next poll */ }
+  }
   render()
 }
 
@@ -121,8 +154,8 @@ function render() {
   const threads = [...state.threads.entries()]
     .map(([src, msgs]) => ({ src, msgs, latest: msgs[msgs.length - 1].at }))
     .sort((a, b) => b.latest - a.latest)
-  const live = threads.filter(t => !state.archived.has(t.src))
-  const arch = threads.filter(t => state.archived.has(t.src))
+  const live = threads.filter(t => !isArchived(t.src))
+  const arch = threads.filter(t => isArchived(t.src))
   const shown = state.showArchived ? [...live, ...arch] : live
 
   $('status').innerHTML = `${live.length} open thread${live.length === 1 ? '' : 's'}, ` +
@@ -150,7 +183,8 @@ function render() {
 }
 
 function threadCard({ src, msgs }) {
-  const isArch = state.archived.has(src)
+  const isArch = isArchived(src)
+  const c = caseOf(src)
   const card = document.createElement('div')
   card.className = 'thread' + (isArch ? ' archived' : '')
 
@@ -162,34 +196,77 @@ function threadCard({ src, msgs }) {
   id.textContent = short(src)
   const ts = document.createElement('span')
   ts.className = 'when'
-  ts.textContent = when(msgs[msgs.length - 1].at)
   const sp = document.createElement('span')
   sp.className = 'spacer'
-  const n = document.createElement('span')
-  n.className = 'count'
-  n.textContent = `${msgs.length} message${msgs.length === 1 ? '' : 's'}`
+  const chip = document.createElement('span')
+  chip.className = 'case' + (c && !isArch ? ' open' : '')
+  chip.textContent = c ? `case ${c.status}` : 'no case yet'
+  chip.title = c
+    ? 'the source reads this dialogue with their recovery phrase'
+    : 'replying opens an encrypted case file this source can read'
   const btn = document.createElement('button')
   btn.textContent = isArch ? 'Unarchive' : 'Archive'
-  btn.onclick = () => {
-    isArch ? state.archived.delete(src) : state.archived.add(src)
-    saveArchived()
+  btn.onclick = async () => {
+    btn.disabled = true
+    if (c) {
+      try {
+        const { payload } = await upsertCase(state.relay, state.sk, state.docket, src,
+          { sourceMsgs: msgs, status: isArch ? 'open' : 'archived', powPolicy: POW_BITS })
+        state.caseData.set(src, payload)
+      } catch (err) { $('status').textContent = `archive failed: ${err.message}` }
+    } else {
+      isArch ? state.archived.delete(src) : state.archived.add(src)
+      saveArchived()
+    }
     render()
   }
-  head.append(id, ts, sp, n, btn)
+  head.append(id, ts, sp, chip, btn)
   card.append(head)
 
-  for (const m of msgs) {
+  // the dialogue: source messages from the wraps, ours from the case payload
+  const mine = (state.caseData.get(src)?.messages ?? []).filter(m => m.from === 'recipient')
+  const dialogue = [...msgs.map(m => ({ ...m, from: 'source' })), ...mine]
+    .sort((a, b) => a.at - b.at)
+  ts.textContent = when(dialogue[dialogue.length - 1].at)
+  for (const m of dialogue) {
     const div = document.createElement('div')
-    div.className = 'tipmsg'
+    div.className = 'tipmsg' + (m.from === 'recipient' ? ' mine' : '')
     const w = document.createElement('div')
     w.className = 'when'
-    w.textContent = when(m.at)
+    w.textContent = (m.from === 'recipient' ? 'you · ' : 'source · ') + when(m.at)
     const b = document.createElement('div')
     b.className = 'body'
     b.textContent = m.text          // textContent: tips are hostile input
     div.append(w, b)
     card.append(div)
   }
+
+  // reply box — first reply mints the case scope + grant + docket entry
+  const row = document.createElement('div')
+  row.className = 'replyrow'
+  const ta = document.createElement('textarea')
+  ta.placeholder = c ? 'Reply…'
+    : 'Reply — this opens an encrypted case file the source can read with their recovery phrase.'
+  const rbtn = document.createElement('button')
+  rbtn.textContent = 'Reply'
+  rbtn.onclick = async () => {
+    const text = ta.value.trim()
+    if (!text) return
+    rbtn.disabled = true
+    rbtn.textContent = 'Publishing…'
+    try {
+      const { payload } = await upsertCase(state.relay, state.sk, state.docket, src,
+        { sourceMsgs: msgs, replyText: text, powPolicy: POW_BITS })
+      state.caseData.set(src, payload)
+      render()
+    } catch (err) {
+      rbtn.disabled = false
+      rbtn.textContent = 'Reply'
+      $('status').textContent = `reply failed: ${err.message}`
+    }
+  }
+  row.append(ta, rbtn)
+  card.append(row)
   return card
 }
 
@@ -213,7 +290,10 @@ $('gen').onclick = () => {
   }
   $('newkey-continue').onclick = () => login(k)
 }
-$('refresh').onclick = () => loadTips()
+$('refresh').onclick = async () => {
+  try { await refreshDocket() } catch { /* keep the cached docket */ }
+  loadTips()
+}
 $('show-arch').onclick = () => { state.showArchived = !state.showArchived; render() }
 $('logout').onclick = () => {
   sessionStorage.removeItem('notegate-login')

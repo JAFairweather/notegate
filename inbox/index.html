@@ -81,9 +81,20 @@
   .thread .spacer { flex:1; }
   .thread .count { font-size:11px; padding:2px 9px; border-radius:999px;
     border:1px solid var(--line); color:var(--dim); }
+  .thread .case { font-size:11px; padding:2px 9px; border-radius:999px;
+    border:1px solid var(--line); color:var(--dim); }
+  .thread .case.open { color:var(--ok); border-color:rgba(124,191,142,.4); }
   .tipmsg { border-top:1px dashed var(--line); margin-top:10px; padding-top:10px; }
   .tipmsg .when { color:var(--dim); font-size:12px; margin-bottom:4px; }
   .tipmsg .body { white-space:pre-wrap; overflow-wrap:break-word; }
+  .tipmsg.mine { border-left:2px solid var(--ok); padding-left:12px; }
+  .tipmsg.mine .when { color:var(--ok); }
+  .replyrow { display:flex; gap:10px; align-items:flex-start; margin-top:12px;
+    border-top:1px solid var(--line); padding-top:12px; }
+  .replyrow textarea { flex:1; min-height:40px; background:var(--bg);
+    border:1px solid var(--line); border-radius:8px; color:var(--text);
+    padding:8px 12px; font:inherit; font-size:14px; resize:vertical; }
+  .replyrow textarea:focus { outline:none; border-color:var(--accent); }
   .empty { color:var(--dim); text-align:center; margin-top:7vh; }
   #archtoggle { display:none; margin:4px 0 18px; }
   #archtoggle a { color:var(--dim); font-size:13px; cursor:pointer; text-decoration:underline; }
