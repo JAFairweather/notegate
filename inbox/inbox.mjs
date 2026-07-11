@@ -9,10 +9,17 @@
 // IS the case docket. Once a case exists its open/archived status lives in
 // the payload and docket (shared with the source); caseless threads keep the
 // local-only archive triage from M1.
+//
+// M3 attachments: source files arrive as manifest entries INSIDE the rumor
+// (chips fetch → hash-verify → decrypt → save); recipient files are encrypted
+// on-device, uploaded to Blossom, and ride the case payload's docs array.
 
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
 import { LiveRelay } from '../lib/liverelay.mjs'
 import { unwrap, powBits } from '../shared/wrap.mjs'
+import { localSigner } from '../lib/nipxx.mjs'
+import { attachFile, fetchAttachment, validAttachment, sha256hex,
+         DEFAULT_SERVERS, MAX_FILE_BYTES } from '../shared/blossom.mjs'
 import { loadDocket, upsertCase, fetchCase, caseOutOfSync } from './case.mjs'
 
 const RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net']
@@ -34,6 +41,50 @@ const state = {
   showArchived: false,
   seen: new Set(),                // wrap ids already processed
   timer: null,
+}
+
+// --- attachments (M3): fetch → verify → decrypt → save ----------------------
+function fileChip(entry) {
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.className = 'filechip'
+  btn.textContent = `↓ ${entry.name}`
+  btn.title = 'fetch, verify, decrypt, save'
+  btn.onclick = async () => {
+    btn.disabled = true
+    btn.textContent = 'fetching…'
+    try {
+      const bytes = await fetchAttachment(entry)
+      btn.dataset.sha = await sha256hex(bytes)          // E2E verification hook
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(new Blob([bytes], { type: entry.mime || 'application/octet-stream' }))
+      a.download = entry.name || 'file'
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(a.href), 60_000)
+      btn.textContent = `↓ ${entry.name}`
+    } catch (err) { btn.textContent = `failed: ${String(err.message).slice(0, 60)}` }
+    btn.disabled = false
+  }
+  return btn
+}
+const renderFiles = (el, entries) => {
+  for (const e of (entries ?? []).filter(validAttachment)) el.append(fileChip(e))
+}
+
+/** Encrypt-and-upload every chosen file (intake key signs the Blossom auth);
+ *  returns manifest entries for the case docs array. Cap checked first. */
+async function uploadFiles(input, onStatus) {
+  const files = [...(input?.files ?? [])]
+  const entries = []
+  for (const [i, f] of files.entries()) {
+    if (f.size > MAX_FILE_BYTES) throw new Error(
+      `“${f.name}” is ${(f.size / 1048576).toFixed(1)} MB — the limit is 100 MB per file`)
+    onStatus(`uploading ${i + 1}/${files.length}…`)
+    entries.push(await attachFile(DEFAULT_SERVERS, localSigner(state.sk),
+      { name: f.name, mime: f.type || 'application/octet-stream',
+        bytes: new Uint8Array(await f.arrayBuffer()) }))
+  }
+  return entries
 }
 
 const caseOf = (src) => state.docket.cases.get(src)
@@ -127,13 +178,14 @@ async function loadTips() {
     let rumor
     try { rumor = unwrap(state.sk, wrap) } catch { continue }   // not for us / malformed
     if (rumor.kind !== 14) continue                             // tips and replies only
-    let text
+    let text, files = []
     try {
       const c = JSON.parse(rumor.content)
       text = typeof c.text === 'string' ? c.text : rumor.content
+      files = Array.isArray(c.files) ? c.files.filter(validAttachment) : []
     } catch { text = rumor.content }
     const msgs = state.threads.get(rumor.pubkey) ?? []
-    msgs.push({ at: rumor.created_at, text })
+    msgs.push({ at: rumor.created_at, text, ...(files.length ? { files } : {}) })
     msgs.sort((a, b) => a.at - b.at)
     state.threads.set(rumor.pubkey, msgs)
   }
@@ -238,7 +290,18 @@ function threadCard({ src, msgs }) {
     b.className = 'body'
     b.textContent = m.text          // textContent: tips are hostile input
     div.append(w, b)
+    renderFiles(div, m.files)       // attachment chips: names are hostile too
     card.append(div)
+  }
+
+  // case documents: files we sent the source (the payload's docs array)
+  const docs = (state.caseData.get(src)?.docs ?? []).filter(validAttachment)
+  if (docs.length) {
+    const dh = document.createElement('div')
+    dh.className = 'docs-head'
+    dh.textContent = 'case documents (sent to the source)'
+    card.append(dh)
+    renderFiles(card, docs)
   }
 
   // reply box — first reply mints the case scope + grant + docket entry
@@ -249,14 +312,24 @@ function threadCard({ src, msgs }) {
     : 'Reply — this opens an encrypted case file the source can read with their recovery phrase.'
   const rbtn = document.createElement('button')
   rbtn.textContent = 'Reply'
+  const attach = document.createElement('div')
+  attach.className = 'attachrow'
+  const fin = document.createElement('input')
+  fin.type = 'file'
+  fin.multiple = true
+  fin.title = 'files are encrypted on this device; the source gets them via the case file'
+  attach.append(fin)
   rbtn.onclick = async () => {
     const text = ta.value.trim()
-    if (!text) return
+    if (!text && !fin.files.length) return
     rbtn.disabled = true
     rbtn.textContent = 'Publishing…'
     try {
+      const entries = await uploadFiles(fin, (s) => { rbtn.textContent = s })
+      const at = Math.floor(Date.now() / 1000)
       const { payload } = await upsertCase(state.relay, state.sk, state.docket, src,
-        { sourceMsgs: msgs, replyText: text, powPolicy: POW_BITS })
+        { sourceMsgs: msgs, replyText: text || undefined,
+          docs: entries.map(e => ({ ...e, at })), powPolicy: POW_BITS })
       state.caseData.set(src, payload)
       render()
     } catch (err) {
@@ -266,7 +339,7 @@ function threadCard({ src, msgs }) {
     }
   }
   row.append(ta, rbtn)
-  card.append(row)
+  card.append(row, attach)
   return card
 }
 
