@@ -247,13 +247,17 @@ $('rotate').onclick = async () => {
       const [ev] = await state.relay.query({ kinds: [0], authors: [state.me], limit: 1 })
       try { name = JSON.parse(ev?.content ?? '{}').name ?? '' } catch { name = '' }
     }
-    const { newSk } = await rotateIntakeKey(state.relay, state.sk, { name, sunsetDays: days })
+    const superseded = state.sk
+    const { newSk } = await rotateIntakeKey(state.relay, superseded, { name, sunsetDays: days })
     // the new key replaces the old everywhere at rest: session slot rewritten,
     // any ncryptsec of the OLD key deleted (login re-offers protection)
     localStorage.removeItem(NC_KEY)
     sessionStorage.removeItem('notegate-no-protect')
     const nsec = nip19.nsecEncode(newSk)
     await login(newSk, hexOf(newSk))
+    // hygiene: this copy of the old key is done — the sunset copy lives (only)
+    // inside the new key's encrypted Grant Index, re-derived on each login
+    superseded.fill(0)
     $('rotate-sec').querySelector('details').open = true
     $('rotated').style.display = 'block'
     $('rotated-nsec').textContent = nsec
