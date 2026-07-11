@@ -3,14 +3,19 @@
 // M2: the returning-source path re-derives that key from the phrase, polls
 // its gift wraps for a case grant, and dereferences the case scope — the
 // dialogue — with the ability to reply at the recipient's PoW price.
-// This page must make zero network requests except to relays.
+// M3: attachments — files are encrypted on-device under a random filekey and
+// uploaded to Blossom hosts as ciphertext; the manifest entry rides INSIDE
+// the encrypted rumor. This page must make zero network requests except to
+// relays and (only when files are attached or downloaded) the blob hosts.
 
 import { getPublicKey, nip19 } from 'nostr-tools'
 // nip06 is not re-exported by the esm.sh root bundle — import the subpath
 import * as nip06 from 'nostr-tools/nip06'
 import { LiveRelay } from '../lib/liverelay.mjs'
 import { wrapWithPow } from '../shared/wrap.mjs'
-import { receiveGrants, latestGrants, fetchScope } from '../lib/nipxx.mjs'
+import { receiveGrants, latestGrants, fetchScope, localSigner } from '../lib/nipxx.mjs'
+import { attachFile, fetchAttachment, validAttachment, sha256hex,
+         DEFAULT_SERVERS, MAX_FILE_BYTES } from '../shared/blossom.mjs'
 
 const RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net']
 const POW_BITS = 20
@@ -18,6 +23,55 @@ const $ = (id) => document.getElementById(id)
 
 let intakePub = null
 const relay = new LiveRelay(RELAYS)
+
+// --- attachments (M3) --------------------------------------------------------
+
+/** Encrypt-and-upload every file chosen in `input`; returns manifest entries.
+ *  The 100 MB cap is enforced before any bytes leave this device. */
+async function uploadFiles(input, sk, statusEl) {
+  const files = [...(input?.files ?? [])]
+  const entries = []
+  for (const [i, f] of files.entries()) {
+    if (f.size > MAX_FILE_BYTES) throw new Error(
+      `“${f.name}” is ${(f.size / 1048576).toFixed(1)} MB — the limit is 100 MB per file`)
+    statusEl.textContent = `encrypting & uploading “${f.name}” (${i + 1}/${files.length})…`
+    entries.push(await attachFile(DEFAULT_SERVERS, localSigner(sk),
+      { name: f.name, mime: f.type || 'application/octet-stream',
+        bytes: new Uint8Array(await f.arrayBuffer()) }))
+  }
+  return entries
+}
+
+/** Download chip: fetch → hash-verify → decrypt → save. Hostile names are
+ *  fine — textContent only, and `download` never navigates. */
+function fileChip(entry) {
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.className = 'filechip'
+  btn.textContent = `↓ ${entry.name}`
+  btn.title = 'fetch, verify, decrypt, save'
+  btn.onclick = async () => {
+    btn.disabled = true
+    btn.textContent = 'fetching…'
+    try {
+      const bytes = await fetchAttachment(entry)
+      btn.dataset.sha = await sha256hex(bytes)          // E2E verification hook
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(new Blob([bytes], { type: entry.mime || 'application/octet-stream' }))
+      a.download = entry.name || 'file'
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(a.href), 60_000)
+      btn.textContent = `↓ ${entry.name}`
+    } catch (err) { btn.textContent = `failed: ${String(err.message).slice(0, 60)}` }
+    btn.disabled = false
+  }
+  return btn
+}
+
+/** Append validated attachment chips for `entries` to `el`. */
+function renderFiles(el, entries) {
+  for (const e of (entries ?? []).filter(validAttachment)) el.append(fileChip(e))
+}
 
 // intake npub rides the URL fragment — never a query string
 try {
@@ -44,9 +98,13 @@ $('f').onsubmit = async (e) => {
     // BIP-39 words are the source's whole identity and reply channel
     const words = nip06.generateSeedWords()
     const sk = nip06.privateKeyFromSeedWords(words)   // Uint8Array in nostr-tools 2.x
+    // files first: encrypted on-device, uploaded as ciphertext; only the
+    // manifest entries enter the rumor, and only the rumor is ever readable
+    const files = await uploadFiles($('tip-files'), sk, $('status'))
     const rumor = {
       kind: 14, created_at: Math.floor(Date.now() / 1000), tags: [],
-      content: JSON.stringify({ notegate: 1, text, thread: null }),
+      content: JSON.stringify({ notegate: 1, text, thread: null,
+        ...(files.length ? { files } : {}) }),
     }
     $('status').textContent = `mining proof of work (${POW_BITS} bits) — this is the spam gate, give it a moment…`
     const wrap = await wrapWithPow(sk, intakePub, rumor, POW_BITS,
@@ -103,7 +161,7 @@ async function loadDialogue() {
     return
   }
   retTo = intakePub ?? g?.publisher ?? null
-  let messages = [], note = ''
+  let messages = [], docs = [], note = ''
   if (!g) {
     note = 'No reply yet. If your message was answered, a private case file would appear here — check back later. You can still send a follow-up below.'
   } else {
@@ -111,6 +169,7 @@ async function loadDialogue() {
     if (res.status === 'ok') {
       retPow = res.data.pow ?? POW_BITS
       messages = res.data.messages ?? []
+      docs = res.data.docs ?? []
       if (res.data.status === 'archived')
         note = 'The recipient archived this conversation — a reply may go unread.'
     } else if (res.status === 'stale') {
@@ -119,10 +178,10 @@ async function loadDialogue() {
       note = 'A reply channel exists, but the case file has not reached these relays yet — check again shortly.'
     }
   }
-  renderDialogue(messages, note)
+  renderDialogue(messages, note, docs)
 }
 
-function renderDialogue(messages, note) {
+function renderDialogue(messages, note, docs = []) {
   $('ret-status').textContent = note
   $('dlg').style.display = 'block'
   const box = $('dlg-msgs')
@@ -138,7 +197,17 @@ function renderDialogue(messages, note) {
     body.className = 'body'
     body.textContent = m.text       // hostile input on both sides
     div.append(who, body)
+    renderFiles(div, m.files)
     box.append(div)
+  }
+  const docsBox = $('dlg-docs')
+  docsBox.textContent = ''
+  if ((docs ?? []).some(validAttachment)) {
+    const h = document.createElement('div')
+    h.className = 'docs-head'
+    h.textContent = 'documents from the recipient'
+    docsBox.append(h)
+    renderFiles(docsBox, docs)
   }
   $('reply-send').disabled = !retTo
   if (!retTo) $('reply-status').textContent =
@@ -147,12 +216,14 @@ function renderDialogue(messages, note) {
 
 $('reply-send').onclick = async () => {
   const text = $('reply').value.trim()
-  if (!text || !retSk || !retTo) return
+  if ((!text && !$('reply-files').files.length) || !retSk || !retTo) return
   $('reply-send').disabled = true
   try {
+    const files = await uploadFiles($('reply-files'), retSk, $('reply-status'))
     const rumor = {
       kind: 14, created_at: Math.floor(Date.now() / 1000), tags: [],
-      content: JSON.stringify({ notegate: 1, text, thread: getPublicKey(retSk) }),
+      content: JSON.stringify({ notegate: 1, text, thread: getPublicKey(retSk),
+        ...(files.length ? { files } : {}) }),
     }
     $('reply-status').textContent = `mining proof of work (${retPow} bits) — the same spam gate as the first message…`
     const wrap = await wrapWithPow(retSk, retTo, rumor, retPow,
@@ -161,6 +232,7 @@ $('reply-send').onclick = async () => {
     await new Promise(r => setTimeout(r, Math.random() * 3000))
     await relay.publish(wrap)
     $('reply').value = ''
+    $('reply-files').value = ''
     $('reply-status').textContent = 'sent. It joins the case file when the recipient next reads their inbox.'
   } catch (err) {
     $('reply-status').innerHTML = '<span class="err"></span>'

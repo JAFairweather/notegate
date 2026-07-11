@@ -10,7 +10,8 @@
 <script type="importmap">
 { "imports": { "nostr-tools": "https://esm.sh/nostr-tools@2.23.9?bundle",
                "nostr-tools/nip06": "https://esm.sh/nostr-tools@2.23.9/nip06?bundle",
-               "nostr-tools/pool": "https://esm.sh/nostr-tools@2.23.9/pool?bundle" } }
+               "nostr-tools/pool": "https://esm.sh/nostr-tools@2.23.9/pool?bundle",
+               "@noble/ciphers/chacha.js": "https://esm.sh/@noble/ciphers@2.2.0/chacha.js" } }
 </script>
 <style>
   /* Notegate: neutral, high-contrast, serious. No warmth, no whimsy. */
@@ -61,6 +62,20 @@
   #dlg textarea { min-height:90px; margin-top:8px; }
   #dlg .refresh { color:var(--dim); font-size:13px; cursor:pointer;
     text-decoration:underline; }
+  input[type=file] { display:block; width:100%; margin-top:10px; color:var(--dim);
+    font-size:13px; }
+  input[type=file]::file-selector-button { background:var(--panel);
+    color:var(--text); border:1px solid var(--line); border-radius:8px;
+    padding:7px 14px; font:inherit; font-size:13px; cursor:pointer;
+    margin-right:10px; }
+  .filehint { color:var(--dim); font-size:12.5px; margin-top:6px; }
+  .filechip { display:inline-block; background:var(--panel);
+    border:1px solid var(--line); border-radius:8px; padding:4px 10px;
+    margin:8px 8px 0 0; font:inherit; font-size:13px; color:var(--accent);
+    font-family:var(--mono); cursor:pointer; }
+  .filechip:hover { border-color:var(--accent); }
+  .filechip:disabled { opacity:.6; cursor:default; }
+  .docs-head { color:var(--dim); font-size:12px; margin-top:14px; }
 </style>
 </head>
 <body>
@@ -71,12 +86,18 @@
     Your message and any follow-up dialogue are end-to-end encrypted; no server
     holds them, and the message you send carries no signature that identifies
     you. But the relays that carry it can see your <b>IP address</b> and when
-    you sent it. If your situation is serious, open this page in
+    you sent it, and if you attach files, the blob hosts that store them see
+    the same — plus the rough size, never the content or name.
+    If your situation is serious, open this page in
     <b>Tor Browser</b> and do not use a work or home network. Losing the
     recovery phrase shown after sending permanently closes the reply channel —
     that is by design.</div>
   <form id="f">
     <textarea id="tip" placeholder="Your tip. Say as much or as little as you want — you can be reached for follow-up only if you keep the recovery phrase." required></textarea>
+    <input type="file" id="tip-files" multiple>
+    <div class="filehint">Files are encrypted on this device before upload —
+      hosts store unnamed ciphertext, padded so even the exact size is hidden.
+      100&nbsp;MB per file.</div>
     <button id="send" type="submit">Encrypt &amp; send</button>
     <div class="status" id="status"></div>
   </form>
@@ -100,8 +121,10 @@
     <div class="status" id="ret-status"></div>
     <div id="dlg">
       <div id="dlg-msgs"></div>
+      <div id="dlg-docs"></div>
       <a class="refresh" id="dlg-refresh">check again for replies</a>
       <textarea id="reply" placeholder="Reply to the recipient…"></textarea>
+      <input type="file" id="reply-files" multiple>
       <button id="reply-send">Encrypt &amp; send reply</button>
       <div class="status" id="reply-status"></div>
     </div>
