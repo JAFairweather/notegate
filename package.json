@@ -11,6 +11,9 @@
     "dialogue:local": "node test/dialogue.mjs --local",
     "attach": "node test/attach.mjs",
     "attach:live": "node test/attach.mjs --live",
+    "rotate": "node test/rotate.mjs",
+    "rotate:local": "node test/rotate.mjs --local",
+    "egress": "node test/egress.mjs",
     "web": "node inbox/serve.mjs",
     "sync-lib": "cp ../nip-demo/nipxx.mjs ../nip-demo/liverelay.mjs ../nip-demo/relay.mjs lib/"
   },

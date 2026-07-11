@@ -22,6 +22,7 @@ import { localSigner } from '../lib/nipxx.mjs'
 import { attachFile, fetchAttachment, validAttachment, sha256hex,
          DEFAULT_SERVERS, MAX_FILE_BYTES } from '../shared/blossom.mjs'
 import { loadDocket, upsertCase, fetchCase, caseOutOfSync } from './case.mjs'
+import { rotateIntakeKey, pruneRetired, retiredKeys, skFromHex, DEFAULT_SUNSET_DAYS } from './rotate.mjs'
 
 const RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net']
 const POW_BITS = 20               // gate: wraps below this are never decrypted
@@ -34,15 +35,23 @@ const hexOf = (b) => Array.from(b, x => x.toString(16).padStart(2, '0')).join(''
 
 const state = {
   relay: null, sk: null, me: null,
+  keys: [],                       // [{ sk, pk, retired, until? }] — [0] is the active intake key,
+                                  // the rest are sunset keys recovered from the Grant Index
   threads: new Map(),             // source pubkey → [{ at, text }] (newest thread first at render)
+  threadKeys: new Map(),          // source pubkey → intake pk the thread arrived on
   archived: new Set(),            // caseless threads only, persisted in localStorage
-  docket: { index: { issued: [], received: [] }, cases: new Map() },  // Grant Index = case docket
+  dockets: new Map(),             // intake pk → { index, cases } (Grant Index = case docket)
   caseData: new Map(),            // source pubkey → decrypted case payload
   gated: 0,                       // wraps rejected by the PoW gate (never decrypted)
   showArchived: false,
   seen: new Set(),                // wrap ids already processed
   timer: null,
 }
+
+/** The intake key a source's thread arrived on (the active key by default). */
+const keyOf = (src) =>
+  state.keys.find(k => k.pk === state.threadKeys.get(src)) ?? state.keys[0]
+const docketOf = (src) => state.dockets.get(keyOf(src)?.pk)
 
 // --- attachments (M3): fetch → verify → decrypt → save ----------------------
 function fileChip(entry) {
@@ -88,7 +97,7 @@ async function uploadFiles(input, onStatus) {
   return entries
 }
 
-const caseOf = (src) => state.docket.cases.get(src)
+const caseOf = (src) => docketOf(src)?.cases.get(src)
 const isArchived = (src) =>
   caseOf(src) ? caseOf(src).status === 'archived' : state.archived.has(src)
 
@@ -101,10 +110,17 @@ function parseKey(input) {
 }
 
 // --- triage state (local only) ---------------------------------------------
+// Union across all watched keys (rotation keeps old triage); saves go to the
+// active key's slot. Ephemeral source pubkeys only — never key material.
 const archiveKey = () => `notegate-archived-${state.me}`
 const loadArchived = () => {
-  try { state.archived = new Set(JSON.parse(localStorage.getItem(archiveKey()) ?? '[]')) }
-  catch { state.archived = new Set() }
+  state.archived = new Set()
+  for (const k of state.keys.length ? state.keys : [{ pk: state.me }]) {
+    try {
+      for (const s of JSON.parse(localStorage.getItem(`notegate-archived-${k.pk}`) ?? '[]'))
+        state.archived.add(s)
+    } catch { /* corrupt entry — ignore */ }
+  }
 }
 const saveArchived = () =>
   localStorage.setItem(archiveKey(), JSON.stringify([...state.archived]))
@@ -118,7 +134,11 @@ async function login(sk, remember) {
   state.me = getPublicKey(sk)
   if (remember) sessionStorage.setItem('notegate-login', remember)
   state.relay ??= new LiveRelay(RELAYS)
-  try { await refreshDocket() } catch { /* no index yet — first run */ }
+  try { await refreshDocket() } catch {
+    // relay hiccup or first run — keep watching the active key alone
+    state.keys = [{ sk, pk: state.me, retired: false }]
+    state.dockets = new Map([[state.me, { index: { issued: [], received: [] }, cases: new Map() }]])
+  }
   loadArchived()
   $('login').style.display = 'none'
   $('unlock').style.display = 'none'
@@ -215,29 +235,85 @@ $('copy-url').onclick = () => {
   $('setup-msg').textContent = 'share URL copied.'
 }
 
+// --- intake key rotation (spec §4.5) ------------------------------------------
+$('rotate').onclick = async () => {
+  const days = Math.min(365, Math.max(1, parseInt($('sunset-days').value, 10) || DEFAULT_SUNSET_DAYS))
+  if (!confirm(`Rotate the intake key?\n\n• A fresh key and share URL are minted — republish the URL everywhere.\n• The old key keeps decrypting for ${days} day${days === 1 ? '' : 's'}, then its key material is deleted and the old URL goes dark.\n• You must store the new nsec: it becomes the tip line.`)) return
+  $('rotate').disabled = true
+  $('setup-msg').textContent = 'rotating — minting key, saving docket, publishing profile…'
+  try {
+    let name = $('org').value.trim()
+    if (!name) {
+      const [ev] = await state.relay.query({ kinds: [0], authors: [state.me], limit: 1 })
+      try { name = JSON.parse(ev?.content ?? '{}').name ?? '' } catch { name = '' }
+    }
+    const { newSk } = await rotateIntakeKey(state.relay, state.sk, { name, sunsetDays: days })
+    // the new key replaces the old everywhere at rest: session slot rewritten,
+    // any ncryptsec of the OLD key deleted (login re-offers protection)
+    localStorage.removeItem(NC_KEY)
+    sessionStorage.removeItem('notegate-no-protect')
+    const nsec = nip19.nsecEncode(newSk)
+    await login(newSk, hexOf(newSk))
+    $('rotate-sec').querySelector('details').open = true
+    $('rotated').style.display = 'block'
+    $('rotated-nsec').textContent = nsec
+    $('rotated-copy').onclick = async () => {
+      await navigator.clipboard.writeText(nsec)
+      $('rotated-copy').textContent = 'Copied ✓'
+      setTimeout(() => { $('rotated-copy').textContent = 'Copy new key' }, 2000)
+    }
+    $('setup-msg').textContent =
+      `rotated. Old key decrypts until ${new Date(Date.now() + days * 86400_000).toLocaleDateString()}; new share URL above.`
+  } catch (err) { $('setup-msg').textContent = `rotation failed: ${err.message} — the old key is untouched` }
+  $('rotate').disabled = false
+}
+
 // --- the case docket (kind 10440 — the ONLY case store) ----------------------
+// One docket per watched key. The active key's index also carries any
+// retired (sunset) keys: recover them, prune the expired ones (pruning
+// deletes the old key material — the index is its only home), and merge
+// every key's docket into the view.
 async function refreshDocket() {
-  state.docket = await loadDocket(state.relay, state.sk)
-  await Promise.all([...state.docket.cases.entries()].map(async ([src, c]) => {
-    const res = await fetchCase(state.relay, state.me, c)
-    if (res.status === 'ok') state.caseData.set(src, res.data)
-  }))
+  const docket = await loadDocket(state.relay, state.sk)
+  const kept = await pruneRetired(state.relay, state.sk, docket.index)
+  state.keys = [
+    { sk: state.sk, pk: state.me, retired: false },
+    ...kept.map(e => ({ sk: skFromHex(e.sk), pk: e.pk, retired: true, until: Number(e.until) })),
+  ]
+  state.dockets = new Map([[state.me, docket]])
+  for (const k of state.keys.slice(1)) {
+    try { state.dockets.set(k.pk, await loadDocket(state.relay, k.sk)) }
+    catch { state.dockets.set(k.pk, { index: { issued: [], received: [] }, cases: new Map() }) }
+  }
+  await Promise.all([...state.dockets.entries()].flatMap(([pk, d]) =>
+    [...d.cases.entries()].map(async ([src, c]) => {
+      const res = await fetchCase(state.relay, pk, c)
+      if (res.status === 'ok') state.caseData.set(src, res.data)
+    })))
 }
 
 // --- the inbox pipeline: poll → PoW gate → unwrap → thread -------------------
+// One query covers every watched key (active + sunset); the wrap's p tag
+// says which key it was encrypted to, so each wrap is tried against exactly
+// one secret key.
 async function loadTips() {
   $('status').textContent = 'polling relays for tips…'
   let wraps
-  try { wraps = await state.relay.query({ kinds: [1059], '#p': [state.me], limit: 500 }) }
-  catch (err) { $('status').textContent = `relay error: ${err.message}`; return }
+  try {
+    wraps = await state.relay.query(
+      { kinds: [1059], '#p': state.keys.map(k => k.pk), limit: 500 })
+  } catch (err) { $('status').textContent = `relay error: ${err.message}`; return }
   for (const wrap of wraps) {
     if (state.seen.has(wrap.id)) continue
     state.seen.add(wrap.id)
     // spam gate: judge the wrap alone, BEFORE any decryption
     if (powBits(wrap) < POW_BITS) { state.gated++; continue }
+    const key = state.keys.find(k => k.pk === wrap.tags.find(t => t[0] === 'p')?.[1])
+    if (!key) continue
     let rumor
-    try { rumor = unwrap(state.sk, wrap) } catch { continue }   // not for us / malformed
+    try { rumor = unwrap(key.sk, wrap) } catch { continue }     // not for us / malformed
     if (rumor.kind !== 14) continue                             // tips and replies only
+    if (!state.threadKeys.has(rumor.pubkey)) state.threadKeys.set(rumor.pubkey, key.pk)
     let text, files = []
     try {
       const c = JSON.parse(rumor.content)
@@ -250,11 +326,13 @@ async function loadTips() {
     state.threads.set(rumor.pubkey, msgs)
   }
   // keep open cases in sync: new source messages get merged into the case
-  // payload (free republish, same key) so the source's own view is complete
+  // payload (free republish, same key) so the source's own view is complete.
+  // Threads on a sunset key sync with THAT key — the source's grant points
+  // at the old pubkey's scope.
   for (const [src, msgs] of state.threads) {
     if (!caseOf(src) || !caseOutOfSync(state.caseData.get(src), msgs)) continue
     try {
-      const { payload } = await upsertCase(state.relay, state.sk, state.docket, src,
+      const { payload } = await upsertCase(state.relay, keyOf(src).sk, docketOf(src), src,
         { sourceMsgs: msgs, powPolicy: POW_BITS })
       state.caseData.set(src, payload)
     } catch { /* transient relay failure — retried next poll */ }
@@ -270,10 +348,15 @@ function render() {
   const arch = threads.filter(t => isArchived(t.src))
   const shown = state.showArchived ? [...live, ...arch] : live
 
+  const sunset = state.keys.filter(k => k.retired)
   $('status').innerHTML = `${live.length} open thread${live.length === 1 ? '' : 's'}, ` +
-    `${arch.length} archived. <span id="gate"></span>`
+    `${arch.length} archived. <span id="gate"></span><span id="sunset"></span>`
   $('status').querySelector('#gate').textContent =
     `PoW gate: ${state.gated} wrap${state.gated === 1 ? '' : 's'} rejected without decryption.`
+  $('status').querySelector('#sunset').textContent = sunset.length
+    ? ` Also watching ${sunset.length} retired key${sunset.length === 1 ? '' : 's'} ` +
+      `(sunset ends ${new Date(Math.max(...sunset.map(k => k.until)) * 1000).toLocaleDateString()}).`
+    : ''
 
   $('archtoggle').style.display = arch.length ? 'block' : 'none'
   $('show-arch').textContent = state.showArchived
@@ -297,6 +380,7 @@ function render() {
 function threadCard({ src, msgs }) {
   const isArch = isArchived(src)
   const c = caseOf(src)
+  const key = keyOf(src)
   const card = document.createElement('div')
   card.className = 'thread' + (isArch ? ' archived' : '')
 
@@ -322,7 +406,7 @@ function threadCard({ src, msgs }) {
     btn.disabled = true
     if (c) {
       try {
-        const { payload } = await upsertCase(state.relay, state.sk, state.docket, src,
+        const { payload } = await upsertCase(state.relay, key.sk, docketOf(src), src,
           { sourceMsgs: msgs, status: isArch ? 'open' : 'archived', powPolicy: POW_BITS })
         state.caseData.set(src, payload)
       } catch (err) { $('status').textContent = `archive failed: ${err.message}` }
@@ -332,7 +416,16 @@ function threadCard({ src, msgs }) {
     }
     render()
   }
-  head.append(id, ts, sp, chip, btn)
+  head.append(id, ts, sp)
+  if (key?.retired) {
+    const old = document.createElement('span')
+    old.className = 'case oldkey'
+    old.textContent = 'retired key'
+    old.title = `arrived on the rotated-out intake key — readable until the sunset ends ` +
+      `(${new Date(key.until * 1000).toLocaleDateString()}), then this channel closes`
+    head.append(old)
+  }
+  head.append(chip, btn)
   card.append(head)
 
   // the dialogue: source messages from the wraps, ours from the case payload
@@ -387,7 +480,7 @@ function threadCard({ src, msgs }) {
     try {
       const entries = await uploadFiles(fin, (s) => { rbtn.textContent = s })
       const at = Math.floor(Date.now() / 1000)
-      const { payload } = await upsertCase(state.relay, state.sk, state.docket, src,
+      const { payload } = await upsertCase(state.relay, key.sk, docketOf(src), src,
         { sourceMsgs: msgs, replyText: text || undefined,
           docs: entries.map(e => ({ ...e, at })), powPolicy: POW_BITS })
       state.caseData.set(src, payload)
