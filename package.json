@@ -9,10 +9,13 @@
     "e2e": "node test/e2e.mjs",
     "dialogue": "node test/dialogue.mjs",
     "dialogue:local": "node test/dialogue.mjs --local",
+    "attach": "node test/attach.mjs",
+    "attach:live": "node test/attach.mjs --live",
     "web": "node inbox/serve.mjs",
     "sync-lib": "cp ../nip-demo/nipxx.mjs ../nip-demo/liverelay.mjs ../nip-demo/relay.mjs lib/"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.2.0",
     "nostr-tools": "^2.23.9",
     "ws": "^8.0.0"
   },

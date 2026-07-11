@@ -57,10 +57,14 @@ export async function fetchCase(relay, intakePub, c) {
  * everything from one dereference. Recipient-side messages persist inside the
  * previous payload; `replyText`, if given, appends one more. `status` flips
  * open/archived (mirrored payload AND docket). `powPolicy` rides in the
- * payload so the source mines replies at the recipient's price.
+ * payload so the source mines replies at the recipient's price. `docs` (M3)
+ * appends attachment manifest entries — {name, size_padded, mime,
+ * sha256_cipher, servers, filekey, at} — to the payload's docs array, the
+ * recipient→source channel for files. Source attachments ride the messages
+ * themselves (`files` on a message), preserved through the merge.
  */
 export async function upsertCase(relay, intakeSk, docket, src,
-                                 { sourceMsgs = [], replyText, status, powPolicy = 20 }) {
+                                 { sourceMsgs = [], replyText, status, powPolicy = 20, docs = [] }) {
   const intakePub = getPublicKey(intakeSk)
   let c = docket.cases.get(src)
   const isNew = !c
@@ -75,7 +79,8 @@ export async function upsertCase(relay, intakeSk, docket, src,
   const kept = prev?.status === 'ok' ? prev.data : { messages: [], docs: [] }
   const seen = new Set(sourceMsgs.map(m => `${m.at}\x00${m.text}`))
   const messages = [
-    ...sourceMsgs.map(m => ({ from: 'source', at: m.at, text: m.text })),
+    ...sourceMsgs.map(m => ({ from: 'source', at: m.at, text: m.text,
+      ...(m.files?.length ? { files: m.files } : {}) })),
     // keep recipient messages, and any source messages the payload has that
     // the live thread doesn't (relays age out wraps before scopes)
     ...(kept.messages ?? []).filter(m =>
@@ -83,7 +88,7 @@ export async function upsertCase(relay, intakeSk, docket, src,
     ...(replyText ? [{ from: 'recipient', at: Math.floor(Date.now() / 1000), text: replyText }] : []),
   ].sort((a, b) => a.at - b.at)
 
-  const payload = { status: c.status, messages, docs: kept.docs ?? [], pow: powPolicy }
+  const payload = { status: c.status, messages, docs: [...(kept.docs ?? []), ...docs], pow: powPolicy }
   await publishScope(relay, intakeSk, {
     scopeId: c.scopeId, generation: c.generation, scopeKey: c.scopeKey, payload,
   })
