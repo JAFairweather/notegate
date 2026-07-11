@@ -15,6 +15,7 @@
 // on-device, uploaded to Blossom, and ride the case payload's docs array.
 
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
+import * as nip49 from 'nostr-tools/nip49'
 import { LiveRelay } from '../lib/liverelay.mjs'
 import { unwrap, powBits } from '../shared/wrap.mjs'
 import { localSigner } from '../lib/nipxx.mjs'
@@ -109,15 +110,20 @@ const saveArchived = () =>
   localStorage.setItem(archiveKey(), JSON.stringify([...state.archived]))
 
 // --- login ------------------------------------------------------------------
-async function login(sk) {
+// `remember` is the hex to keep for this tab session, or null on the
+// ncryptsec-unlock path (a passphrase-protected key persists ONLY as
+// ncryptsec in localStorage; nothing else is ever stored at rest).
+async function login(sk, remember) {
   state.sk = sk
   state.me = getPublicKey(sk)
-  sessionStorage.setItem('notegate-login', hexOf(sk))
+  if (remember) sessionStorage.setItem('notegate-login', remember)
   state.relay ??= new LiveRelay(RELAYS)
-  loadArchived()
   try { await refreshDocket() } catch { /* no index yet — first run */ }
+  loadArchived()
   $('login').style.display = 'none'
+  $('unlock').style.display = 'none'
   $('setup').style.display = 'block'
+  if (remember) offerProtect(remember)
   $('me').style.display = 'flex'
   $('status').style.display = 'block'
   const npub = nip19.npubEncode(state.me)
@@ -132,6 +138,60 @@ async function login(sk) {
   await loadTips()
   clearInterval(state.timer)
   state.timer = setInterval(loadTips, POLL_MS)
+}
+
+// --- NIP-49: passphrase-protected intake key at rest --------------------------
+// The ncryptsec in localStorage is the ONLY persisted secret. Unprotected
+// keys live in sessionStorage for the tab session only (convenience) until
+// the user takes the protect offer; taking it clears sessionStorage.
+
+const NC_KEY = 'notegate-ncryptsec'
+
+function offerProtect(hex) {
+  if (localStorage.getItem(NC_KEY) || sessionStorage.getItem('notegate-no-protect')) return
+  $('protect').style.display = 'flex'
+  $('protect-go').onclick = async () => {
+    const pass = $('protect-pass').value
+    if (pass.length < 8) { $('protect-msg').textContent = 'use at least 8 characters'; return }
+    $('protect-msg').textContent = 'encrypting key (scrypt — a second or two)…'
+    await new Promise(r => setTimeout(r, 30))                // let the message paint
+    const sk = Uint8Array.from(hex.match(/../g), h => parseInt(h, 16))
+    localStorage.setItem(NC_KEY, nip49.encrypt(sk, pass))
+    sk.fill(0)                                               // this copy is done
+    sessionStorage.removeItem('notegate-login')              // ncryptsec replaces it
+    $('protect-pass').value = ''
+    $('protect').style.display = 'none'
+    $('setup-msg').textContent =
+      'Key protected. Next visit asks for the passphrase; the nsec still works anywhere.'
+  }
+  $('protect-pass').onkeydown = (e) => { if (e.key === 'Enter') $('protect-go').onclick() }
+  $('protect-skip').onclick = () => {
+    sessionStorage.setItem('notegate-no-protect', '1')
+    $('protect').style.display = 'none'
+  }
+}
+
+function showUnlock(ncryptsec) {
+  $('login').style.display = 'none'
+  $('unlock').style.display = ''
+  $('unlock-pass').focus()
+  $('unlock-go').onclick = async () => {
+    $('unlock-err').textContent = 'decrypting (scrypt — a second or two)…'
+    await new Promise(r => setTimeout(r, 30))
+    try {
+      const sk = nip49.decrypt(ncryptsec, $('unlock-pass').value)
+      $('unlock-pass').value = ''
+      $('unlock-err').textContent = ''
+      login(sk, null)                                        // nothing new persisted
+    } catch { $('unlock-err').textContent = 'wrong passphrase' }
+  }
+  $('unlock-pass').onkeydown = (e) => { if (e.key === 'Enter') $('unlock-go').onclick() }
+  $('unlock-forget').onclick = () => {
+    if (!confirm('Forget the protected intake key stored on this device?\n\nThis deletes the only local copy — make sure the nsec is written down; it is the tip line.')) return
+    localStorage.removeItem(NC_KEY)
+    $('unlock').style.display = 'none'
+    $('login').style.display = ''
+  }
 }
 
 // --- identity publish --------------------------------------------------------
@@ -345,7 +405,7 @@ function threadCard({ src, msgs }) {
 
 // --- wiring -------------------------------------------------------------------
 $('go').onclick = () => {
-  try { login(parseKey($('nsec').value)) }
+  try { const k = parseKey($('nsec').value); login(k, hexOf(k)) }
   catch { $('err').textContent = 'Expected nsec1… or 64 hex chars.' }
 }
 $('nsec').onkeydown = (e) => { if (e.key === 'Enter') $('go').onclick() }
@@ -361,7 +421,7 @@ $('gen').onclick = () => {
     $('newkey-copy').textContent = 'Copied \u2713'
     setTimeout(() => { $('newkey-copy').textContent = 'Copy' }, 2000)
   }
-  $('newkey-continue').onclick = () => login(k)
+  $('newkey-continue').onclick = () => login(k, hexOf(k))
 }
 $('refresh').onclick = async () => {
   try { await refreshDocket() } catch { /* keep the cached docket */ }
@@ -374,5 +434,8 @@ $('logout').onclick = () => {
   location.reload()
 }
 
+// Boot order: a tab-session key first; else a protected key (ncryptsec
+// present → passphrase prompt); else the login screen.
 const saved = sessionStorage.getItem('notegate-login')
-if (saved) login(Uint8Array.from(saved.match(/../g), h => parseInt(h, 16)))
+if (saved) login(Uint8Array.from(saved.match(/../g), h => parseInt(h, 16)), saved)
+else if (localStorage.getItem(NC_KEY)) showUnlock(localStorage.getItem(NC_KEY))
