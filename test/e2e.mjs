@@ -9,6 +9,7 @@ import { finalizeEvent, generateSecretKey, getPublicKey, nip19 } from 'nostr-too
 import { Relay } from '../lib/relay.mjs'
 import { LocalRelay } from '../lib/liverelay.mjs'
 import { wrapWithPow, unwrap, powBits } from '../shared/wrap.mjs'
+import { publishJittered, MAX_JITTER_MS, currentMaxJitterMs } from '../shared/jitter.mjs'
 
 const BITS = 8                       // low difficulty for tests; the gate logic is identical
 const inner = new Relay()
@@ -75,6 +76,29 @@ check('no source pubkey visible',
   !blob.includes(getPublicKey(srcA)) && !blob.includes(getPublicKey(srcB)))
 check('intake pubkey appears only as routing tag, never as author',
   inner.events.filter(e => e.kind === 1059).every(e => e.pubkey !== intakePub))
+
+console.log('\n5. Per-relay publish jitter (delays near-zero here; 0–90s in the page)')
+check('default window is the spec’s 0–90s', MAX_JITTER_MS === 90_000 && currentMaxJitterMs() === 90_000)
+const inners5 = [new Relay(), new Relay(), new Relay()]
+const relays5 = inners5.map(r => new LocalRelay(r))
+const wrap5 = await wrapWithPow(generateSecretKey(), intakePub, tip('jitter check'), BITS)
+const progress = []
+const r5 = await publishJittered(relays5, wrap5,
+  { maxMs: 120, onProgress: (n, of) => progress.push([n, of]) })
+check('every relay eventually receives the wrap (independent delays)',
+  r5.acks === 3 && inners5.every(r => r.events.some(e => e.id === wrap5.id)))
+check('each relay drew its own delay inside the window',
+  r5.delays.length === 3 && r5.delays.every(d => d >= 0 && d < 120))
+check('progress narrated per relay', progress.length === 3 && progress[2][0] === 3)
+const broken = [{ publish: async () => { throw new Error('rate limited') } }, relays5[0]]
+const r5b = await publishJittered(broken, wrap5, { maxMs: 50 })
+check('≥1-ack contract: one dead relay does not fail the publish', r5b.acks === 1 && r5b.of === 2)
+let allDead = null
+try { await publishJittered([broken[0]], wrap5, { maxMs: 50 }) } catch (err) { allDead = err }
+check('zero acks is a hard failure', allDead?.message.includes('no relay accepted'))
+check('test hook: NOTEGATE_MAX_JITTER_MS overrides the window',
+  (globalThis.NOTEGATE_MAX_JITTER_MS = 7, currentMaxJitterMs() === 7,
+   delete globalThis.NOTEGATE_MAX_JITTER_MS, currentMaxJitterMs() === 90_000))
 
 console.log(`\n${failed === 0 ? '\x1b[32m' : '\x1b[31m'}${passed} passed, ${failed} failed\x1b[0m`)
 process.exit(failed === 0 ? 0 : 1)

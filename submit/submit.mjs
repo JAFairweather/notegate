@@ -13,6 +13,7 @@ import { getPublicKey, nip19 } from 'nostr-tools'
 import * as nip06 from 'nostr-tools/nip06'
 import { LiveRelay } from '../lib/liverelay.mjs'
 import { wrapWithPow } from '../shared/wrap.mjs'
+import { publishJittered, currentMaxJitterMs } from '../shared/jitter.mjs'
 import { receiveGrants, latestGrants, fetchScope, localSigner } from '../lib/nipxx.mjs'
 import { attachFile, fetchAttachment, validAttachment, sha256hex,
          DEFAULT_SERVERS, MAX_FILE_BYTES } from '../shared/blossom.mjs'
@@ -22,7 +23,19 @@ const POW_BITS = 20
 const $ = (id) => document.getElementById(id)
 
 let intakePub = null
-const relay = new LiveRelay(RELAYS)
+const relay = new LiveRelay(RELAYS)                       // queries (profile, grants, scopes)
+const pubRelays = RELAYS.map(u => new LiveRelay([u]))     // publishes: one connection per relay, jittered independently
+
+/** Publish a wrap with per-relay 0–90s jitter, narrating honestly into `el`. */
+async function publishStaggered(wrap, el) {
+  const secs = Math.round(currentMaxJitterMs() / 1000)
+  const note = (done) =>
+    `staggering publication to resist timing correlation — each relay gets ` +
+    `an independent random delay of up to ${secs}s (${done}/${pubRelays.length} done). ` +
+    `Keep this tab open until it finishes.`
+  el.textContent = note(0)
+  return publishJittered(pubRelays, wrap, { onProgress: (n) => { el.textContent = note(n) } })
+}
 
 // --- attachments (M3) --------------------------------------------------------
 
@@ -109,13 +122,13 @@ $('f').onsubmit = async (e) => {
     $('status').textContent = `mining proof of work (${POW_BITS} bits) — this is the spam gate, give it a moment…`
     const wrap = await wrapWithPow(sk, intakePub, rumor, POW_BITS,
       (n) => { $('status').textContent = `mining proof of work… ${Math.round(n / 1000)}k attempts` })
-    // per-relay jitter: publish to each relay on its own randomized delay
-    $('status').textContent = 'publishing with randomized delays…'
-    await new Promise(r => setTimeout(r, Math.random() * 3000))   // M1: short jitter; 0–90s at M4
-    await relay.publish(wrap)
+    // per-relay jitter (spec §6): each relay gets its own 0–90s random delay
+    await publishStaggered(wrap, $('status'))
+    $('status').textContent = ''
     $('f').style.display = 'none'
     $('after').style.display = 'block'
     $('phrase').textContent = words
+    sk.fill(0)          // memory hygiene: the phrase re-derives it; this copy is done
   } catch (err) {
     $('status').innerHTML = `<span class="err"></span>`
     $('status').querySelector('.err').textContent = `failed: ${err.message} — nothing was sent in the clear`
@@ -228,9 +241,7 @@ $('reply-send').onclick = async () => {
     $('reply-status').textContent = `mining proof of work (${retPow} bits) — the same spam gate as the first message…`
     const wrap = await wrapWithPow(retSk, retTo, rumor, retPow,
       (n) => { $('reply-status').textContent = `mining proof of work… ${Math.round(n / 1000)}k attempts` })
-    $('reply-status').textContent = 'publishing with randomized delay…'
-    await new Promise(r => setTimeout(r, Math.random() * 3000))
-    await relay.publish(wrap)
+    await publishStaggered(wrap, $('reply-status'))
     $('reply').value = ''
     $('reply-files').value = ''
     $('reply-status').textContent = 'sent. It joins the case file when the recipient next reads their inbox.'
