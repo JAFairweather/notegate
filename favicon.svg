@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Nave">
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#0b0906" stroke="#7f95ad" stroke-opacity="0.5" stroke-width="1.2"/>
+  <g transform="translate(4 4)" fill="none" stroke="#7f95ad" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11 V8 a4 4 0 0 1 8 0 V11"/><circle cx="12" cy="15" r="1.2" fill="#7f95ad" stroke="none"/>
+  </g>
+</svg>
