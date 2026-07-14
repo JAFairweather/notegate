@@ -14,42 +14,66 @@
                "@noble/ciphers/chacha.js": "https://esm.sh/@noble/ciphers@2.2.0/chacha.js" } }
 </script>
 <style>
-  /* Notegate: neutral, high-contrast, serious. No warmth, no whimsy. */
-  :root { --bg:#111214; --panel:#191b1e; --line:#33373d; --text:#e8eaed;
-    --dim:#9aa0a8; --accent:#c8cdd4; --warn:#d9a648; --ok:#7cbf8e;
-    --mono:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  /* ─── The Nave design system ──────────────────────────────────────────
+     Shared ink/gold tokens + a per-app accent (Notegate = slate, its seal).
+     Sans-serif throughout: proportional sans for text, a clean sans
+     monospace for labels/keys. Semantics: accent = the app's act,
+     ok/green = sharing, amber = stale, red = destroy. */
+  :root {
+    --ink: #0b0906; --bg: #0b0906; --panel: #14100a; --panel2: #1b1409; --line: #2a2317;
+    --text: #f4efe4; --dim: #9c927f;
+    --gold: #c39a56; --gold-bright: #e2c079;
+    --accent: #7f95ad; --accent-bright: #9aadc2; --accent-ink: #0c1219;
+    --ok: #8fae6a; --warn: #d9a648; --danger: #c0705a;
+    --alby: #ffdf6f; --alby-bright: #ffe98c; --alby-ink: #1c1400;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Roboto Mono", monospace;
+    --serif: var(--sans);   /* the family is sans-serif now; alias kept for any legacy refs */
+    --radius: 6px;
+  }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
-    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    font:16px/1.6 var(--sans); -webkit-font-smoothing:antialiased;
+    background-image: radial-gradient(1100px 620px at 50% -10%, color-mix(in srgb, var(--gold) 7%, transparent), transparent 70%);
+    background-attachment: fixed; }
   main { max-width:640px; margin:0 auto; padding:36px 24px 80px; }
-  h1 { font-size:22px; margin:0 0 4px; }
+
+  /* ── header: seal · wordmark ─────────────────────────────────────────── */
+  .brand-seal { width:58px; height:58px; flex:none; display:block; margin-bottom:12px; }
+  .brand-seal svg { width:100%; height:100%; display:block; }
+  h1 { font-family:var(--sans); font-weight:800; font-size:22px; letter-spacing:.02em;
+    margin:0 0 4px; color:var(--text); }
   .to { color:var(--dim); margin-bottom:24px; }
   .to b { color:var(--text); }
   .warn { background:rgba(217,166,72,.08); border:1px solid rgba(217,166,72,.35);
     border-radius:10px; padding:14px 16px; font-size:14px; color:var(--warn);
     margin-bottom:22px; }
   .warn b { display:block; margin-bottom:6px; }
-  textarea { width:100%; min-height:180px; background:var(--panel);
-    border:1px solid var(--line); border-radius:10px; color:var(--text);
-    padding:14px; font:inherit; resize:vertical; }
+  textarea { width:100%; min-height:180px; background:var(--bg);
+    border:1px solid var(--line); border-radius:var(--radius); color:var(--text);
+    padding:14px; font:inherit; font-family:var(--sans); resize:vertical; }
   textarea:focus { outline:none; border-color:var(--accent); }
-  button { background:var(--accent); color:#16181b; border:none; border-radius:10px;
-    padding:12px 22px; font:inherit; font-weight:650; cursor:pointer; margin-top:14px; }
+  button { background:var(--accent); color:var(--accent-ink); border:1px solid var(--accent);
+    border-radius:var(--radius); padding:12px 22px; font-family:var(--sans);
+    font-size:13px; font-weight:700; letter-spacing:.1em; text-transform:uppercase;
+    cursor:pointer; margin-top:14px;
+    transition:border-color .14s, color .14s, background .14s; }
+  button:hover { background:var(--accent-bright); border-color:var(--accent-bright); color:var(--accent-ink); }
   button:disabled { opacity:.5; cursor:default; }
-  .status { color:var(--dim); font-size:14px; margin-top:12px; min-height:1.4em; }
+  .status { color:var(--dim); font-size:14px; margin-top:12px; min-height:1.4em; font-family:var(--mono); }
   .phrase { background:var(--panel); border:1px solid var(--line); border-radius:10px;
     padding:16px; font-family:var(--mono); font-size:15px; line-height:1.8;
-    margin:14px 0; user-select:all; }
+    color:var(--gold); margin:14px 0; user-select:all; }
   .after { display:none; }
   .after p { font-size:14px; color:var(--dim); }
-  .err { color:var(--warn); }
+  .err { color:var(--warn); font-family:var(--mono); }
   .ret-link { margin-top:28px; font-size:14px; }
-  .ret-link a { color:var(--dim); cursor:pointer; text-decoration:underline; }
+  .ret-link a { color:var(--accent); cursor:pointer; text-decoration:underline; }
   #retsec { display:none; }
   #retsec p { font-size:14px; color:var(--dim); }
   #retsec .row { display:flex; gap:10px; }
-  #retsec input { flex:1; background:var(--panel); border:1px solid var(--line);
-    border-radius:10px; color:var(--text); padding:12px 14px; font:inherit;
+  #retsec input { flex:1; background:var(--bg); border:1px solid var(--line);
+    border-radius:var(--radius); color:var(--text); padding:12px 14px; font:inherit;
     font-size:14px; font-family:var(--mono); }
   #retsec input:focus { outline:none; border-color:var(--accent); }
   #retsec .row button { margin-top:0; }
@@ -57,7 +81,7 @@
   #dlg .msg { background:var(--panel); border:1px solid var(--line);
     border-radius:10px; padding:12px 14px; margin-bottom:10px; }
   #dlg .msg.me { border-left:2px solid var(--accent); }
-  #dlg .who { color:var(--dim); font-size:12px; margin-bottom:4px; }
+  #dlg .who { color:var(--dim); font-size:12px; margin-bottom:4px; font-family:var(--mono); }
   #dlg .body { white-space:pre-wrap; overflow-wrap:break-word; font-size:15px; }
   #dlg textarea { min-height:90px; margin-top:8px; }
   #dlg .refresh { color:var(--dim); font-size:13px; cursor:pointer;
@@ -65,12 +89,12 @@
   input[type=file] { display:block; width:100%; margin-top:10px; color:var(--dim);
     font-size:13px; }
   input[type=file]::file-selector-button { background:var(--panel);
-    color:var(--text); border:1px solid var(--line); border-radius:8px;
+    color:var(--text); border:1px solid var(--line); border-radius:var(--radius);
     padding:7px 14px; font:inherit; font-size:13px; cursor:pointer;
     margin-right:10px; }
   .filehint { color:var(--dim); font-size:12.5px; margin-top:6px; }
   .filechip { display:inline-block; background:var(--panel);
-    border:1px solid var(--line); border-radius:8px; padding:4px 10px;
+    border:1px solid var(--line); border-radius:var(--radius); padding:4px 10px;
     margin:8px 8px 0 0; font:inherit; font-size:13px; color:var(--accent);
     font-family:var(--mono); cursor:pointer; }
   .filechip:hover { border-color:var(--accent); }
@@ -80,6 +104,10 @@
 </head>
 <body>
 <main>
+  <span class="brand-seal"><svg viewBox="0 0 32 32" role="img" aria-label="Notegate">
+    <rect x="1" y="1" width="30" height="30" rx="7" fill="#0b0906" stroke="#7f95ad" stroke-opacity=".5" stroke-width="1.2"/>
+    <g transform="translate(4 4)" fill="none" stroke="#7f95ad" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11 V8 a4 4 0 0 1 8 0 V11"/><circle cx="12" cy="15" r="1.2" fill="#7f95ad" stroke="none"/></g>
+  </svg></span>
   <h1>Send a secure tip</h1>
   <div class="to" id="to">loading recipient…</div>
   <div class="warn"><b>Before you type anything, understand what this does and does not hide.</b>
@@ -131,5 +159,56 @@
   </section>
 </main>
 <script type="module" src="submit.mjs"></script>
+
+<!-- The common Nave footer — identical on every app. -->
+<style>
+  .nave-footer { background:#0b0906; border-top:1px solid #2a2317; color:#7a6f5c;
+    font-family:ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; padding:38px 24px; margin-top:56px; }
+  .nave-footer .nf-wrap { max-width:1040px; margin:0 auto; display:flex; flex-direction:column;
+    align-items:center; text-align:center; gap:18px; }
+  .nave-footer a { text-decoration:none; }
+  .nf-brand { display:inline-flex; align-items:center; gap:10px; font-size:13px;
+    letter-spacing:.16em; text-transform:uppercase; color:#c39a56; }
+  .nf-brand:hover { color:#e2c079; }
+  .nf-brand svg { width:22px; height:22px; flex:none; }
+  .nf-apps { display:flex; flex-wrap:wrap; gap:8px 16px; justify-content:center;
+    font-size:12px; letter-spacing:.08em; }
+  .nf-apps a { color:#9c927f; }
+  .nf-apps a:hover { color:#e2c079; }
+  .nf-apps .here { color:#f4efe4; border-bottom:1px solid #c39a56; }
+  .nf-meta { display:flex; flex-wrap:wrap; gap:8px 18px; justify-content:center;
+    align-items:center; font-size:12px; }
+  .nf-meta a { color:#c39a56; }
+  .nf-meta a:hover { color:#e2c079; }
+  .nf-npub { font-size:11px; color:#6f6553; word-break:break-all; }
+  .nf-whisper { font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-style:italic; font-size:13px; color:#6f6553; }
+</style>
+<footer class="nave-footer">
+  <div class="nf-wrap">
+    <a class="nf-brand" href="https://nave.pub">
+      <svg viewBox="0 0 100 100" fill="none" aria-hidden="true">
+        <circle cx="50" cy="50" r="46" stroke="#c39a56" stroke-width="2" opacity="0.5"/>
+        <path d="M50 6 L57 43 L94 50 L57 57 L50 94 L43 57 L6 50 L43 43 Z" fill="#c39a56" fill-opacity="0.16" stroke="#c39a56" stroke-width="2"/>
+        <circle cx="50" cy="50" r="4" fill="#e2c079"/>
+      </svg>
+      A nave.pub project
+    </a>
+    <nav class="nf-apps">
+      <a href="https://noir.nave.pub">Noir</a>
+      <a href="https://nontact.nave.pub">Nontact</a>
+      <a href="https://nvelope.nave.pub">Nvelope</a>
+      <a href="https://nherit.nave.pub">Nherit</a>
+      <a href="https://ntrigue.nave.pub">Ntrigue</a>
+      <a class="here" href="https://notegate.nave.pub">Notegate</a>
+      <a href="https://nvoy.nave.pub">Nvoy</a>
+      <a href="https://nscope.nave.pub">Nscope</a>
+    </nav>
+    <div class="nf-meta">
+      <a href="mailto:help@nave.pub">help@nave.pub</a>
+      <span class="nf-npub">npub1gqg2csuzqmwpqqvts99786spefkf90xz96t3n6zp6fqnk2r74pxs4tcgrg</span>
+    </div>
+    <div class="nf-whisper">Identity = Freedom · your data answers to your keys, and no one else's.</div>
+  </div>
+</footer>
 </body>
 </html>
