@@ -145,6 +145,11 @@ async function login(sk, remember) {
   $('setup').style.display = 'block'
   if (remember) offerProtect(remember)
   $('me').style.display = 'flex'
+  // nave-connect fleet convention (nact#16): the identity pill names how the
+  // session signs. Here that is ALWAYS 'local key' — PoW-mined wraps, tip
+  // unwrapping and sunset rotation all need the raw intake secret, so remote
+  // signers (nip07/nip46) cannot apply by design.
+  $('me-kind').textContent = 'local key'
   $('status').style.display = 'block'
   const npub = nip19.npubEncode(state.me)
   $('my-npub').textContent = short(state.me)
@@ -532,7 +537,11 @@ $('logout').onclick = () => {
 }
 
 // Boot order: a tab-session key first; else a protected key (ncryptsec
-// present → passphrase prompt); else the login screen.
+// present → passphrase prompt); else the login screen. The bare-hex remember
+// is nave-connect's `local` session shape (its parseSession reads exactly
+// this), kept app-owned on purpose: the module's serializeSession throws for
+// 'local' — apps hold their own key material — and nothing else of it
+// applies here, so it is not vendored.
 const saved = sessionStorage.getItem('notegate-login')
 if (saved) login(Uint8Array.from(saved.match(/../g), h => parseInt(h, 16)), saved)
 else if (localStorage.getItem(NC_KEY)) showUnlock(localStorage.getItem(NC_KEY))
